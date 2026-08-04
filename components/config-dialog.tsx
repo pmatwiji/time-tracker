@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import type { AppConfig } from "@/lib/types"
+import { REGULATORY_DAILY_HOURS } from "@/lib/format"
 import { toast } from "sonner"
 
 type ConfigDialogProps = {
@@ -26,31 +27,20 @@ type ConfigDialogProps = {
 export function ConfigDialog({ config, onSaved }: ConfigDialogProps) {
   const [open, setOpen] = useState(false)
   const [dailyHours, setDailyHours] = useState(String(config.daily_hours_goal))
-  const [monthlyDays, setMonthlyDays] = useState(
-    String(config.monthly_days_goal),
-  )
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (open) {
       setDailyHours(String(config.daily_hours_goal))
-      setMonthlyDays(String(config.monthly_days_goal))
     }
   }, [open, config])
 
   const handleSave = async () => {
     const daily = Number(dailyHours)
-    const monthly = Number(monthlyDays)
 
     if (!Number.isFinite(daily) || daily <= 0 || daily > 24) {
       toast.error("Horas por día inválidas", {
         description: "Ingresá un valor entre 1 y 24.",
-      })
-      return
-    }
-    if (!Number.isFinite(monthly) || monthly <= 0 || monthly > 31) {
-      toast.error("Días por mes inválidos", {
-        description: "Ingresá un valor entre 1 y 31.",
       })
       return
     }
@@ -61,7 +51,6 @@ export function ConfigDialog({ config, onSaved }: ConfigDialogProps) {
       .from("app_config")
       .update({
         daily_hours_goal: daily,
-        monthly_days_goal: monthly,
         updated_at: new Date().toISOString(),
       })
       .eq("id", 1)
@@ -91,13 +80,14 @@ export function ConfigDialog({ config, onSaved }: ConfigDialogProps) {
         <DialogHeader>
           <DialogTitle>Configuración de objetivos</DialogTitle>
           <DialogDescription>
-            Definí cuánto querés trabajar para medir tu progreso.
+            Los días del mes se calculan solos: lunes a viernes, menos
+            feriados marcados.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5 py-2">
           <div className="space-y-2">
-            <Label htmlFor="daily-hours">Horas objetivo por día</Label>
+            <Label htmlFor="daily-hours">Horas objetivo por día laboral</Label>
             <Input
               id="daily-hours"
               type="number"
@@ -108,23 +98,8 @@ export function ConfigDialog({ config, onSaved }: ConfigDialogProps) {
               onChange={(e) => setDailyHours(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Cuántas horas planeás trabajar cada día laboral.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="monthly-days">Días a trabajar por mes</Label>
-            <Input
-              id="monthly-days"
-              type="number"
-              min={1}
-              max={31}
-              step={1}
-              value={monthlyDays}
-              onChange={(e) => setMonthlyDays(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Cantidad de días laborales esperados en el mes.
+              En el gráfico, las primeras {REGULATORY_DAILY_HOURS}h se marcan
+              como reglamentarias (blanco) y el resto como exceso (rojo).
             </p>
           </div>
         </div>

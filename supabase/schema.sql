@@ -17,8 +17,13 @@ create table if not exists public.work_sessions (
   duration_seconds integer not null check (duration_seconds > 0),
   note text,
   worked_on date not null,
+  is_holiday boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- Si la tabla ya existía sin esta columna:
+alter table public.work_sessions
+  add column if not exists is_holiday boolean not null default false;
 
 create index if not exists work_sessions_created_at_idx
   on public.work_sessions (created_at desc);

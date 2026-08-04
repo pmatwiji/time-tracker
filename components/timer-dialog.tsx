@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
-import { formatClock, localDateKey } from "@/lib/format"
+import { formatClock, todayKey } from "@/lib/format"
 import { toast } from "sonner"
 
 type TimerDialogProps = {
@@ -26,6 +26,7 @@ export function TimerDialog({ onSaved }: TimerDialogProps) {
   const [running, setRunning] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(0)
   const [note, setNote] = useState("")
+  const [isHoliday, setIsHoliday] = useState(false)
   const [saving, setSaving] = useState(false)
 
   // Accumulated ms from previous run segments + timestamp of current segment start
@@ -70,6 +71,7 @@ export function TimerDialog({ onSaved }: TimerDialogProps) {
     setElapsedMs(0)
     setRunning(false)
     setNote("")
+    setIsHoliday(false)
   }
 
   const totalSeconds = Math.floor(elapsedMs / 1000)
@@ -86,7 +88,8 @@ export function TimerDialog({ onSaved }: TimerDialogProps) {
     const { error } = await supabase.from("work_sessions").insert({
       duration_seconds: totalSeconds,
       note: note.trim() || null,
-      worked_on: localDateKey(new Date()),
+      worked_on: todayKey(),
+      is_holiday: isHoliday,
     })
     setSaving(false)
 
@@ -186,6 +189,20 @@ export function TimerDialog({ onSaved }: TimerDialogProps) {
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
+
+          <Label
+            htmlFor="session-holiday"
+            className="w-full cursor-pointer font-normal text-muted-foreground"
+          >
+            <input
+              id="session-holiday"
+              type="checkbox"
+              checked={isHoliday}
+              onChange={(e) => setIsHoliday(e.target.checked)}
+              className="size-4 accent-primary"
+            />
+            ¿Es feriado?
+          </Label>
 
           <Button
             onClick={handleSave}

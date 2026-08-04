@@ -3,7 +3,6 @@
 import {
   Bar,
   BarChart,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -11,37 +10,67 @@ import {
 } from "recharts"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { DayTotal } from "@/lib/stats"
-import { dayLabel, formatDuration, localDateKey, toHours } from "@/lib/format"
+import {
+  dayLabel,
+  formatDateDisplay,
+  formatDuration,
+  REGULATORY_DAILY_HOURS,
+  toHours,
+} from "@/lib/format"
 
 type WeeklyChartProps = {
   data: DayTotal[]
-  goalHours: number
 }
 
 type ChartDatum = {
   key: string
   label: string
-  hours: number
   seconds: number
-  isToday: boolean
+  regularHours: number
+  extraHours: number
+  isNonWorking: boolean
 }
 
-export function WeeklyChart({ data, goalHours }: WeeklyChartProps) {
-  const todayKey = localDateKey(new Date())
-  const chartData: ChartDatum[] = data.map((d) => ({
-    key: d.date,
-    label: dayLabel(d.date),
-    hours: toHours(d.seconds),
-    seconds: d.seconds,
-    isToday: d.date === todayKey,
-  }))
+export function WeeklyChart({ data }: WeeklyChartProps) {
+  const chartData: ChartDatum[] = data.map((d) => {
+    const hours = toHours(d.seconds)
+    const isNonWorking = d.isWeekend || d.isHoliday
 
-  const maxHours = Math.max(goalHours, ...chartData.map((d) => d.hours), 1)
+    if (isNonWorking) {
+      return {
+        key: d.date,
+        label: dayLabel(d.date),
+        seconds: d.seconds,
+        regularHours: 0,
+        extraHours: hours,
+        isNonWorking: true,
+      }
+    }
+
+    return {
+      key: d.date,
+      label: dayLabel(d.date),
+      seconds: d.seconds,
+      regularHours: Math.min(hours, REGULATORY_DAILY_HOURS),
+      extraHours: Math.max(0, hours - REGULATORY_DAILY_HOURS),
+      isNonWorking: false,
+    }
+  })
+
+  const maxHours = Math.max(
+    REGULATORY_DAILY_HOURS,
+    ...chartData.map((d) => d.regularHours + d.extraHours),
+    1,
+  )
 
   return (
     <Card className="h-full">
       <CardHeader>
         <CardTitle>Últimos 7 días</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Blanco: hasta {REGULATORY_DAILY_HOURS}h reglamentarias. Rojo: exceso,
+          feriado o fin de semana.
+        </p>
       </CardHeader>
       <CardContent>
         <div className="h-64 w-full">
@@ -70,25 +99,45 @@ export function WeeklyChart({ data, goalHours }: WeeklyChartProps) {
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null
                   const d = payload[0].payload as ChartDatum
+                  let breakdown: string
+                  if (d.seconds <= 0) {
+                    breakdown = "Sin registro"
+                  } else if (d.isNonWorking) {
+                    breakdown = `${formatDuration(d.seconds)} · no laborable`
+                  } else if (d.extraHours > 0) {
+                    breakdown = `${REGULATORY_DAILY_HOURS}h regulares + ${formatDuration(Math.round(d.extraHours * 3600))} extra`
+                  } else {
+                    breakdown = `${formatDuration(d.seconds)} reglamentarias`
+                  }
                   return (
                     <div className="rounded-lg border bg-popover px-3 py-2 text-sm shadow-md">
-                      <p className="font-medium">{d.label}</p>
-                      <p className="text-muted-foreground">
-                        {d.seconds > 0 ? formatDuration(d.seconds) : "Sin registro"}
+                      <p className="font-medium">
+                        {d.label} {formatDateDisplay(d.key)}
                       </p>
+                      {d.seconds > 0 ? (
+                        <p className="text-muted-foreground">
+                          {formatDuration(d.seconds)}
+                        </p>
+                      ) : null}
+                      <p className="text-xs text-muted-foreground">{breakdown}</p>
                     </div>
                   )
                 }}
               />
-              <Bar dataKey="hours" radius={[6, 6, 0, 0]} maxBarSize={48}>
-                {chartData.map((d) => (
-                  <Cell
-                    key={d.key}
-                    fill={d.isToday ? "var(--primary)" : "var(--chart-2)"}
-                    fillOpacity={d.isToday ? 1 : 0.55}
-                  />
-                ))}
-              </Bar>
+              <Bar
+                dataKey="regularHours"
+                stackId="day"
+                fill="#f5f5f5"
+                maxBarSize={48}
+                radius={[0, 0, 0, 0]}
+              />
+              <Bar
+                dataKey="extraHours"
+                stackId="day"
+                fill="var(--destructive)"
+                maxBarSize={48}
+                radius={[6, 6, 0, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>

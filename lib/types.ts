@@ -2,7 +2,8 @@ export type WorkSession = {
   id: string
   duration_seconds: number
   note: string | null
-  worked_on: string // YYYY-MM-DD
+  worked_on: string // YYYY-MM-DD (día calendario en UTC-3)
+  is_holiday: boolean
   created_at: string
 }
 

@@ -59,6 +59,7 @@ export function RecentSessions({ sessions, onChanged }: RecentSessionsProps) {
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {fullDateLabel(s.worked_on)}
+                    {s.is_holiday ? " · Feriado" : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-1">

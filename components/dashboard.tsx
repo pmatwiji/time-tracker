@@ -6,19 +6,20 @@ import {
   CalendarCheck,
   CalendarDays,
   Clock3,
-  Flame,
   Hourglass,
   TrendingUp,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { AppConfig, WorkSession } from "@/lib/types"
 import { computeStats } from "@/lib/stats"
-import { formatDuration, fullDateLabel } from "@/lib/format"
+import { formatDuration } from "@/lib/format"
 import { StatCard } from "@/components/stat-card"
 import { GoalProgress } from "@/components/goal-progress"
 import { WeeklyChart } from "@/components/weekly-chart"
+import { ActivityHeatmap } from "@/components/activity-heatmap"
 import { RecentSessions } from "@/components/recent-sessions"
 import { TimerDialog } from "@/components/timer-dialog"
+import { ManualEntryDialog } from "@/components/manual-entry-dialog"
 import { ConfigDialog } from "@/components/config-dialog"
 
 type DashboardData = {
@@ -72,8 +73,9 @@ export function Dashboard() {
             Registra tu tiempo y seguí tu progreso de trabajo.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {data ? <ConfigDialog config={data.config} onSaved={refresh} /> : null}
+          <ManualEntryDialog onSaved={refresh} />
           <TimerDialog onSaved={refresh} />
         </div>
       </header>
@@ -96,7 +98,11 @@ export function Dashboard() {
             <StatCard
               label="Hoy"
               value={formatDuration(stats.todaySeconds)}
-              sublabel={`Objetivo: ${data.config.daily_hours_goal}h`}
+              sublabel={
+                stats.todayIsWorkingDay
+                  ? `Objetivo: ${data.config.daily_hours_goal}h`
+                  : "Día no laborable"
+              }
               icon={Clock3}
             />
             <StatCard
@@ -108,7 +114,7 @@ export function Dashboard() {
             <StatCard
               label="Este mes"
               value={formatDuration(stats.monthSeconds)}
-              sublabel={`${stats.daysWorkedThisMonth} de ${data.config.monthly_days_goal} días`}
+              sublabel={`${stats.daysWorkedThisMonth} de ${stats.expectedWorkingDays} días hábiles`}
               icon={CalendarDays}
             />
             <StatCard
@@ -121,58 +127,45 @@ export function Dashboard() {
 
           <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <WeeklyChart
-                data={stats.last7Days}
-                goalHours={data.config.daily_hours_goal}
-              />
+              <WeeklyChart data={stats.last7Days} />
             </div>
             <GoalProgress
               goals={[
                 {
                   label: "Horas de hoy",
-                  detail: `${formatDuration(stats.todaySeconds)} / ${data.config.daily_hours_goal}h`,
+                  detail: stats.todayIsWorkingDay
+                    ? `${formatDuration(stats.todaySeconds)} / ${data.config.daily_hours_goal}h`
+                    : `${formatDuration(stats.todaySeconds)} · no laborable`,
                   progress: stats.todayProgress,
                 },
                 {
                   label: "Días del mes",
-                  detail: `${stats.daysWorkedThisMonth} / ${data.config.monthly_days_goal} días`,
+                  detail: `${stats.daysWorkedThisMonth} / ${stats.expectedWorkingDays} días hábiles`,
                   progress: stats.monthDaysGoalProgress,
                 },
                 {
                   label: "Horas del mes",
-                  detail: `${formatDuration(stats.monthSeconds)} / ${Math.round(
+                  detail: `${formatDuration(stats.monthBusinessSeconds)} / ${Math.round(
                     stats.monthHoursGoalSeconds / 3600,
-                  )}h`,
+                  )}h hábiles`,
                   progress: stats.monthHoursProgress,
                 },
               ]}
             />
           </section>
 
-          <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-1 lg:grid-cols-1">
+          <section className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-stretch">
+            <div className="grid h-full min-h-72 grid-rows-2 gap-4 lg:col-span-1 lg:min-h-0">
+              <ActivityHeatmap data={stats.last30Days} />
               <StatCard
-                label="Día más productivo"
-                value={
-                  stats.bestDay && stats.bestDay.seconds > 0
-                    ? formatDuration(stats.bestDay.seconds)
-                    : "—"
-                }
-                sublabel={
-                  stats.bestDay && stats.bestDay.seconds > 0
-                    ? fullDateLabel(stats.bestDay.date)
-                    : "Sin registros aún"
-                }
-                icon={Flame}
-              />
-              <StatCard
+                fill
                 label="Promedio por día trabajado"
                 value={
                   stats.avgPerWorkedDay > 0
                     ? formatDuration(stats.avgPerWorkedDay)
                     : "—"
                 }
-                sublabel="En el mes actual"
+                sublabel="Solo días hábiles del mes"
                 icon={Hourglass}
               />
             </div>
