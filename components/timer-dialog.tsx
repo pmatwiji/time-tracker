@@ -19,9 +19,10 @@ import { toast } from "sonner"
 
 type TimerDialogProps = {
   onSaved: () => void
+  holidayDates?: Set<string>
 }
 
-export function TimerDialog({ onSaved }: TimerDialogProps) {
+export function TimerDialog({ onSaved, holidayDates }: TimerDialogProps) {
   const [open, setOpen] = useState(false)
   const [running, setRunning] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(0)
@@ -52,6 +53,11 @@ export function TimerDialog({ onSaved }: TimerDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running])
 
+  useEffect(() => {
+    if (!open) return
+    setIsHoliday(Boolean(holidayDates?.has(todayKey())))
+  }, [open, holidayDates])
+
   const handleStartPause = () => {
     if (running) {
       // Pausing: bank the elapsed time
@@ -71,7 +77,7 @@ export function TimerDialog({ onSaved }: TimerDialogProps) {
     setElapsedMs(0)
     setRunning(false)
     setNote("")
-    setIsHoliday(false)
+    setIsHoliday(Boolean(holidayDates?.has(todayKey())))
   }
 
   const totalSeconds = Math.floor(elapsedMs / 1000)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { CalendarDays, CalendarPlus, Save } from "lucide-react"
 import {
   Dialog,
@@ -16,30 +16,30 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import {
-  addDaysToKey,
   formatDateDisplay,
   formatDuration,
   parseDisplayDate,
+  REGULATORY_DAILY_HOURS,
   todayKey,
 } from "@/lib/format"
 import { toast } from "sonner"
 
 type ManualEntryDialogProps = {
   onSaved: () => void
+  holidayDates?: Set<string>
 }
 
-function yesterdayKey(): string {
-  return addDaysToKey(todayKey(), -1)
+function todayDisplay(): string {
+  return formatDateDisplay(todayKey())
 }
 
-function yesterdayDisplay(): string {
-  return formatDateDisplay(yesterdayKey())
-}
-
-export function ManualEntryDialog({ onSaved }: ManualEntryDialogProps) {
+export function ManualEntryDialog({
+  onSaved,
+  holidayDates,
+}: ManualEntryDialogProps) {
   const [open, setOpen] = useState(false)
-  const [dateInput, setDateInput] = useState(yesterdayDisplay)
-  const [hours, setHours] = useState("8")
+  const [dateInput, setDateInput] = useState(todayDisplay)
+  const [hours, setHours] = useState(String(REGULATORY_DAILY_HOURS))
   const [minutes, setMinutes] = useState("0")
   const [note, setNote] = useState("")
   const [isHoliday, setIsHoliday] = useState(false)
@@ -47,15 +47,26 @@ export function ManualEntryDialog({ onSaved }: ManualEntryDialogProps) {
   const datePickerRef = useRef<HTMLInputElement>(null)
 
   const today = todayKey()
-  const pickerValue = parseDisplayDate(dateInput) ?? yesterdayKey()
+  const pickerValue = parseDisplayDate(dateInput) ?? today
+
+  const holidayForDate = (key: string | null) =>
+    Boolean(key && holidayDates?.has(key))
 
   const resetForm = () => {
-    setDateInput(yesterdayDisplay())
-    setHours("8")
+    const display = todayDisplay()
+    setDateInput(display)
+    setHours(String(REGULATORY_DAILY_HOURS))
     setMinutes("0")
     setNote("")
-    setIsHoliday(false)
+    setIsHoliday(holidayForDate(today))
   }
+
+  useEffect(() => {
+    if (!open) return
+    const key = parseDisplayDate(dateInput)
+    setIsHoliday(holidayForDate(key))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateInput, holidayDates, open])
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next)

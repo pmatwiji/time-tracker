@@ -5,7 +5,7 @@ import { Clock, Trash2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import type { WorkSession } from "@/lib/types"
-import { formatDuration, fullDateLabel } from "@/lib/format"
+import { formatDuration, fullDateLabel, toDateKey } from "@/lib/format"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 
@@ -58,7 +58,7 @@ export function RecentSessions({ sessions, onChanged }: RecentSessionsProps) {
                     {s.note || "Sesión de trabajo"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {fullDateLabel(s.worked_on)}
+                    {fullDateLabel(toDateKey(s.worked_on))}
                     {s.is_holiday ? " · Feriado" : ""}
                   </p>
                 </div>

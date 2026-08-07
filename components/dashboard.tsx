@@ -3,16 +3,27 @@
 import useSWR from "swr"
 import { useMemo } from "react"
 import {
-  CalendarCheck,
   CalendarDays,
   Clock3,
   Hourglass,
+  Palmtree,
   TrendingUp,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { AppConfig, WorkSession } from "@/lib/types"
 import { computeStats } from "@/lib/stats"
-import { formatDuration } from "@/lib/format"
+import {
+  addDaysToKey,
+  formatDuration,
+  formatVacationBalance,
+  parseDateParts,
+  toDateKey,
+  todayKey,
+} from "@/lib/format"
+import {
+  fetchHolidaysForYears,
+  holidayDateSet,
+} from "@/lib/holidays"
 import { StatCard } from "@/components/stat-card"
 import { GoalProgress } from "@/components/goal-progress"
 import { WeeklyChart } from "@/components/weekly-chart"
@@ -21,6 +32,7 @@ import { RecentSessions } from "@/components/recent-sessions"
 import { TimerDialog } from "@/components/timer-dialog"
 import { ManualEntryDialog } from "@/components/manual-entry-dialog"
 import { ConfigDialog } from "@/components/config-dialog"
+import { HolidaysCalendarDialog } from "@/components/holidays-calendar-dialog"
 
 type DashboardData = {
   config: AppConfig
@@ -52,10 +64,32 @@ export function Dashboard() {
     revalidateOnFocus: false,
   })
 
+  const holidayYears = useMemo(() => {
+    const years = new Set<number>()
+    const today = todayKey()
+    years.add(parseDateParts(today).year)
+    years.add(parseDateParts(addDaysToKey(today, -29)).year)
+    for (const s of data?.sessions ?? []) {
+      years.add(parseDateParts(toDateKey(s.worked_on)).year)
+    }
+    return [...years]
+  }, [data?.sessions])
+
+  const { data: apiHolidays = [] } = useSWR(
+    holidayYears.length ? ["feriados", ...holidayYears] : null,
+    () => fetchHolidaysForYears(holidayYears),
+    { revalidateOnFocus: false, dedupingInterval: 60 * 60 * 1000 },
+  )
+
+  const apiHolidayDates = useMemo(
+    () => holidayDateSet(apiHolidays),
+    [apiHolidays],
+  )
+
   const stats = useMemo(() => {
     if (!data) return null
-    return computeStats(data.sessions, data.config)
-  }, [data])
+    return computeStats(data.sessions, data.config, apiHolidayDates)
+  }, [data, apiHolidayDates])
 
   const refresh = () => mutate()
 
@@ -75,8 +109,12 @@ export function Dashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {data ? <ConfigDialog config={data.config} onSaved={refresh} /> : null}
-          <ManualEntryDialog onSaved={refresh} />
-          <TimerDialog onSaved={refresh} />
+          <HolidaysCalendarDialog />
+          <ManualEntryDialog
+            onSaved={refresh}
+            holidayDates={apiHolidayDates}
+          />
+          <TimerDialog onSaved={refresh} holidayDates={apiHolidayDates} />
         </div>
       </header>
 
@@ -108,20 +146,38 @@ export function Dashboard() {
             <StatCard
               label="Esta semana"
               value={formatDuration(stats.weekSeconds)}
-              sublabel={`${stats.sessionCount} sesiones en total`}
+              sublabel={`Objetivo: ${formatDuration(stats.weekHoursGoalSeconds)} (${stats.expectedWorkingDaysThisWeek} días)`}
               icon={TrendingUp}
             />
             <StatCard
               label="Este mes"
               value={formatDuration(stats.monthSeconds)}
-              sublabel={`${stats.daysWorkedThisMonth} de ${stats.expectedWorkingDays} días hábiles`}
+              sublabel={`Objetivo: ${formatDuration(stats.monthHoursGoalSeconds)} (${stats.expectedWorkingDays} días)`}
               icon={CalendarDays}
             />
             <StatCard
-              label="Total acumulado"
+              label="Horas trabajadas"
               value={formatDuration(stats.totalSeconds)}
-              sublabel="Desde el inicio"
-              icon={CalendarCheck}
+              sublabel={
+                stats.firstWorkedOn ? (
+                  <div className="space-y-0.5">
+                    <p>
+                      Debía: {formatDuration(stats.expectedSecondsSinceStart)} (
+                      {stats.expectedDaysSinceStart} días hábiles)
+                    </p>
+                    <p>
+                      Vacaciones:{" "}
+                      {formatVacationBalance(
+                        stats.excessSeconds,
+                        Number(data.config.daily_hours_goal) * 3600,
+                      )}
+                    </p>
+                  </div>
+                ) : (
+                  "Sin registros aún"
+                )
+              }
+              icon={Palmtree}
             />
           </section>
 
@@ -145,10 +201,22 @@ export function Dashboard() {
                 },
                 {
                   label: "Horas del mes",
-                  detail: `${formatDuration(stats.monthBusinessSeconds)} / ${Math.round(
-                    stats.monthHoursGoalSeconds / 3600,
-                  )}h hábiles`,
+                  detail: `${formatDuration(stats.monthBusinessSeconds)} / ${formatDuration(stats.monthHoursGoalSeconds)} hábiles`,
                   progress: stats.monthHoursProgress,
+                },
+                {
+                  label: "Días de vacaciones",
+                  detail: formatVacationBalance(
+                    stats.excessSeconds,
+                    Number(data.config.daily_hours_goal) * 3600,
+                  ),
+                  progress:
+                    stats.expectedSecondsSinceStart > 0
+                      ? Math.min(
+                          stats.excessSeconds / stats.expectedSecondsSinceStart,
+                          1,
+                        )
+                      : 0,
                 },
               ]}
             />

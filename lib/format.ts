@@ -59,6 +59,31 @@ export function formatDuration(totalSeconds: number): string {
   return `${seconds}s`
 }
 
+/**
+ * Excedente en días del objetivo diario, sin redondear de más.
+ * Ej: 13h con objetivo 4h → "3 Dias 1 Hora"
+ */
+export function formatVacationBalance(
+  excessSeconds: number,
+  dailyGoalSeconds: number,
+): string {
+  const excess = Math.max(0, Math.floor(excessSeconds))
+  const goal = Number(dailyGoalSeconds)
+  if (excess <= 0 || !(goal > 0)) return "0 Dias"
+
+  const days = Math.floor(excess / goal)
+  const remainder = excess % goal
+  const hours = Math.floor(remainder / 3600)
+  const minutes = Math.floor((remainder % 3600) / 60)
+
+  const parts: string[] = []
+  if (days > 0) parts.push(days === 1 ? "1 Dia" : `${days} Dias`)
+  if (hours > 0) parts.push(hours === 1 ? "1 Hora" : `${hours} Horas`)
+  if (minutes > 0) parts.push(`${minutes}m`)
+
+  return parts.length > 0 ? parts.join(" ") : "0 Dias"
+}
+
 /** Decimal hours, rounded to 1 decimal. */
 export function toHours(totalSeconds: number): number {
   return Math.round((totalSeconds / 3600) * 10) / 10
@@ -82,8 +107,16 @@ export function addDaysToKey(key: string, delta: number): string {
   return `${utc.getUTCFullYear()}-${pad2(utc.getUTCMonth() + 1)}-${pad2(utc.getUTCDate())}`
 }
 
+/** Normaliza cualquier fecha a YYYY-MM-DD (Supabase a veces manda timestamp). */
+export function toDateKey(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim())
+  if (!match) return value.slice(0, 10)
+  return `${match[1]}-${match[2]}-${match[3]}`
+}
+
 export function parseDateParts(key: string): DateParts {
-  const [year, month, day] = key.split("-").map(Number)
+  const normalized = toDateKey(key)
+  const [year, month, day] = normalized.split("-").map(Number)
   return { year: year ?? 0, month: month ?? 1, day: day ?? 1 }
 }
 
@@ -166,4 +199,26 @@ export function countWeekdaysInMonth(year: number, month: number): number {
     if (weekday !== 0 && weekday !== 6) count++
   }
   return count
+}
+
+/**
+ * Días hábiles (lun–vie) entre start y end inclusive,
+ * excluyendo fechas en `holidays`.
+ */
+export function countWorkingDaysInRange(
+  startKey: string,
+  endKey: string,
+  holidays: Set<string> = new Set(),
+): number {
+  if (endKey < startKey) return 0
+  let count = 0
+  for (let key = startKey; key <= endKey; key = addDaysToKey(key, 1)) {
+    if (!isWeekendKey(key) && !holidays.has(key)) count++
+  }
+  return count
+}
+
+/** Domingo (fin de semana laboral lun–dom) de la semana de `key`. */
+export function endOfWeekKey(key: string): string {
+  return addDaysToKey(startOfWeekKey(key), 6)
 }

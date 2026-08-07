@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
@@ -5,7 +6,7 @@ import { cn } from "@/lib/utils"
 type StatCardProps = {
   label: string
   value: string
-  sublabel?: string
+  sublabel?: ReactNode
   icon: LucideIcon
   className?: string
   /** Expande el contenido para llenar la altura de la card. */
@@ -41,7 +42,7 @@ export function StatCard({
             {value}
           </p>
           {sublabel ? (
-            <p className="truncate text-xs text-muted-foreground">{sublabel}</p>
+            <div className="text-xs text-muted-foreground">{sublabel}</div>
           ) : null}
         </div>
         <div

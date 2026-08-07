@@ -2,10 +2,13 @@ import type { AppConfig, WorkSession } from "@/lib/types"
 import {
   addDaysToKey,
   countWeekdaysInMonth,
+  countWorkingDaysInRange,
+  endOfWeekKey,
   isWeekendKey,
   localDateKey,
   parseDateParts,
   startOfWeekKey,
+  toDateKey,
   todayKey,
   toHours,
 } from "@/lib/format"
@@ -24,40 +27,70 @@ export type Stats = {
   /** Horas del mes solo en días hábiles (para objetivos). */
   monthBusinessSeconds: number
   weekSeconds: number
-  sessionCount: number
   /** Días hábiles del mes con horas (lun-vie, no feriado). */
   daysWorkedThisMonth: number
   /** Lun-vie del mes menos feriados marcados. */
   expectedWorkingDays: number
+  /** Días hábiles de la semana actual (lun–vie − feriados). */
+  expectedWorkingDaysThisWeek: number
+  weekHoursGoalSeconds: number
+  monthHoursGoalSeconds: number
   avgPerWorkedDay: number
   bestDay: DayTotal | null
   todayIsWorkingDay: boolean
   todayGoalSeconds: number
   todayProgress: number // 0..1
   monthDaysGoalProgress: number // 0..1
-  monthHoursGoalSeconds: number
   monthHoursProgress: number // 0..1
+  /** Primera fecha con registro (YYYY-MM-DD). */
+  firstWorkedOn: string | null
+  /** Días hábiles con horas cargadas (base del esperado). */
+  expectedDaysSinceStart: number
+  /** Horas esperadas = días hábiles trabajados × objetivo diario. */
+  expectedSecondsSinceStart: number
+  /** Horas extra: exceso en días hábiles + todo lo de finde/feriado. */
+  excessSeconds: number
+  /** Excedente pasado a días según el objetivo diario. */
+  vacationDays: number
   last7Days: DayTotal[]
   last30Days: DayTotal[]
 }
 
-function holidayDates(sessions: WorkSession[]): Set<string> {
+function holidayDatesFromSessions(sessions: WorkSession[]): Set<string> {
   const holidays = new Set<string>()
   for (const s of sessions) {
-    if (s.is_holiday) holidays.add(s.worked_on)
+    if (s.is_holiday) holidays.add(toDateKey(s.worked_on))
   }
   return holidays
+}
+
+function mergeHolidaySets(...sets: Array<Set<string> | undefined>): Set<string> {
+  const merged = new Set<string>()
+  for (const set of sets) {
+    if (!set) continue
+    for (const d of set) merged.add(toDateKey(d))
+  }
+  return merged
 }
 
 function isNonWorkingDay(key: string, holidays: Set<string>): boolean {
   return isWeekendKey(key) || holidays.has(key)
 }
 
-export function computeStats(sessions: WorkSession[], config: AppConfig): Stats {
+export function computeStats(
+  sessions: WorkSession[],
+  config: AppConfig,
+  apiHolidays?: Set<string>,
+): Stats {
   const today = todayKey()
   const { year: currentYear, month: currentMonth } = parseDateParts(today)
   const weekStart = startOfWeekKey(today)
-  const holidays = holidayDates(sessions)
+  const weekEnd = endOfWeekKey(today)
+  const holidays = mergeHolidaySets(
+    holidayDatesFromSessions(sessions),
+    apiHolidays,
+  )
+  const dailyGoalSeconds = Number(config.daily_hours_goal) * 3600
 
   const byDay = new Map<string, number>()
   let totalSeconds = 0
@@ -65,21 +98,29 @@ export function computeStats(sessions: WorkSession[], config: AppConfig): Stats 
   let monthSeconds = 0
   let weekSeconds = 0
   let monthBusinessSeconds = 0
+  let firstWorkedOn: string | null = null
 
   for (const s of sessions) {
+    const workedOn = toDateKey(s.worked_on)
     totalSeconds += s.duration_seconds
-    byDay.set(s.worked_on, (byDay.get(s.worked_on) ?? 0) + s.duration_seconds)
+    byDay.set(workedOn, (byDay.get(workedOn) ?? 0) + s.duration_seconds)
 
-    if (s.worked_on === today) todaySeconds += s.duration_seconds
+    if (!firstWorkedOn || workedOn < firstWorkedOn) {
+      firstWorkedOn = workedOn
+    }
 
-    const parts = parseDateParts(s.worked_on)
+    if (workedOn === today) todaySeconds += s.duration_seconds
+
+    const parts = parseDateParts(workedOn)
     if (parts.month === currentMonth && parts.year === currentYear) {
       monthSeconds += s.duration_seconds
-      if (!isNonWorkingDay(s.worked_on, holidays)) {
+      if (!isNonWorkingDay(workedOn, holidays)) {
         monthBusinessSeconds += s.duration_seconds
       }
     }
-    if (s.worked_on >= weekStart) weekSeconds += s.duration_seconds
+    if (workedOn >= weekStart && workedOn <= weekEnd) {
+      weekSeconds += s.duration_seconds
+    }
   }
 
   const weekdaysInMonth = countWeekdaysInMonth(currentYear, currentMonth)
@@ -95,6 +136,11 @@ export function computeStats(sessions: WorkSession[], config: AppConfig): Stats 
     }
   }
   const expectedWorkingDays = Math.max(0, weekdaysInMonth - holidayWeekdaysInMonth)
+  const expectedWorkingDaysThisWeek = countWorkingDaysInRange(
+    weekStart,
+    weekEnd,
+    holidays,
+  )
 
   let daysWorkedThisMonth = 0
   for (const [date, seconds] of byDay.entries()) {
@@ -147,11 +193,31 @@ export function computeStats(sessions: WorkSession[], config: AppConfig): Stats 
   }
 
   const todayIsWorkingDay = !isNonWorkingDay(today, holidays)
-  const todayGoalSeconds = todayIsWorkingDay
-    ? config.daily_hours_goal * 3600
-    : 0
+  const todayGoalSeconds = todayIsWorkingDay ? dailyGoalSeconds : 0
+  const weekHoursGoalSeconds =
+    Number(config.daily_hours_goal) * expectedWorkingDaysThisWeek * 3600
   const monthHoursGoalSeconds =
-    config.daily_hours_goal * expectedWorkingDays * 3600
+    Number(config.daily_hours_goal) * expectedWorkingDays * 3600
+
+  // Banco de vacaciones: solo horas por encima del objetivo diario.
+  // Finde/feriado cuenta entero. Los días por debajo del objetivo NO restan.
+  let excessSeconds = 0
+  let workedBusinessDaysSinceStart = 0
+  for (const [date, seconds] of byDay.entries()) {
+    if (seconds <= 0) continue
+    if (isNonWorkingDay(date, holidays)) {
+      excessSeconds += seconds
+      continue
+    }
+    workedBusinessDaysSinceStart++
+    excessSeconds += Math.max(0, seconds - dailyGoalSeconds)
+  }
+
+  const expectedDaysSinceStart = workedBusinessDaysSinceStart
+  const expectedSecondsSinceStart =
+    workedBusinessDaysSinceStart * dailyGoalSeconds
+  const vacationDays =
+    dailyGoalSeconds > 0 ? excessSeconds / dailyGoalSeconds : 0
 
   return {
     totalSeconds,
@@ -159,9 +225,11 @@ export function computeStats(sessions: WorkSession[], config: AppConfig): Stats 
     monthSeconds,
     monthBusinessSeconds,
     weekSeconds,
-    sessionCount: sessions.length,
     daysWorkedThisMonth,
     expectedWorkingDays,
+    expectedWorkingDaysThisWeek,
+    weekHoursGoalSeconds,
+    monthHoursGoalSeconds,
     avgPerWorkedDay,
     bestDay,
     todayIsWorkingDay,
@@ -175,11 +243,15 @@ export function computeStats(sessions: WorkSession[], config: AppConfig): Stats 
       expectedWorkingDays > 0
         ? Math.min(daysWorkedThisMonth / expectedWorkingDays, 1)
         : 0,
-    monthHoursGoalSeconds,
     monthHoursProgress:
       monthHoursGoalSeconds > 0
         ? Math.min(monthBusinessSeconds / monthHoursGoalSeconds, 1)
         : 0,
+    firstWorkedOn,
+    expectedDaysSinceStart,
+    expectedSecondsSinceStart,
+    excessSeconds,
+    vacationDays,
     last7Days,
     last30Days,
   }
