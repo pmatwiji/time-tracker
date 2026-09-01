@@ -24,7 +24,12 @@ const DAY_ROWS = ["L", "M", "X", "J", "V", "S", "D"] // Lun → Dom
 
 function cellClass(day: DayTotal | null): string {
   if (!day) return "bg-transparent"
-  if (day.seconds <= 0) return "bg-muted/80"
+  if (day.seconds <= 0) {
+    if (day.timeOffLabel) return "bg-neutral-500/45"
+    return day.isWeekend || day.isHoliday
+      ? "bg-muted/50"
+      : "bg-neutral-500/45"
+  }
 
   const hours = toHours(day.seconds)
   const nonWorking = day.isWeekend || day.isHoliday
@@ -43,11 +48,16 @@ function cellClass(day: DayTotal | null): string {
 }
 
 function tooltipText(day: DayTotal): string {
-  const hours = toHours(day.seconds)
-  if (day.seconds <= 0) return "Sin registro"
+  if (day.seconds <= 0) {
+    if (day.timeOffLabel) return day.timeOffLabel
+    return day.isWeekend || day.isHoliday
+      ? "Sin registro · no laborable"
+      : "Sin registro"
+  }
   if (day.isWeekend || day.isHoliday) {
     return `${formatDuration(day.seconds)} · no laborable`
   }
+  const hours = toHours(day.seconds)
   if (hours > REGULATORY_DAILY_HOURS) {
     const extra = Math.round((hours - REGULATORY_DAILY_HOURS) * 3600)
     return `${REGULATORY_DAILY_HOURS}h regulares + ${formatDuration(extra)} extra`
@@ -86,6 +96,7 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
               seconds: 0,
               isWeekend: isWeekendKey(key),
               isHoliday: false,
+              timeOffLabel: null,
             },
           )
         }
@@ -204,7 +215,8 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
           </p>
           <div className="flex shrink-0 items-center gap-1">
             <span>Menos</span>
-            <span className="size-2.5 rounded-[2px] bg-muted/80" />
+            <span className="size-2.5 rounded-[2px] bg-neutral-500/45" title="Sin registro" />
+            <span className="size-2.5 rounded-[2px] bg-muted/50" title="No laborable sin registro" />
             <span className="size-2.5 rounded-[2px] bg-neutral-600" />
             <span className="size-2.5 rounded-[2px] bg-neutral-300" />
             <span className="size-2.5 rounded-[2px] bg-white" />

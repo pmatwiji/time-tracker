@@ -13,3 +13,14 @@ export type AppConfig = {
   monthly_days_goal: number
   updated_at: string
 }
+
+/** Vacaciones o días libres consumidos del banco (días enteros de 4h). */
+export type VacationUsage = {
+  id: string
+  start_date: string
+  end_date: string
+  description: string | null
+  /** Días hábiles inclusive (lun–vie sin feriados). */
+  days_count: number
+  created_at: string
+}

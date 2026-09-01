@@ -26,24 +26,46 @@ type ChartDatum = {
   key: string
   label: string
   seconds: number
+  emptyHours: number
   regularHours: number
   extraHours: number
   isNonWorking: boolean
+  isEmpty: boolean
+  timeOffLabel: string | null
 }
 
 export function WeeklyChart({ data }: WeeklyChartProps) {
   const chartData: ChartDatum[] = data.map((d) => {
     const hours = toHours(d.seconds)
     const isNonWorking = d.isWeekend || d.isHoliday
+    const timeOffLabel = d.timeOffLabel ?? null
+
+    if (d.seconds <= 0) {
+      const showEmptyBar = !isNonWorking
+      return {
+        key: d.date,
+        label: dayLabel(d.date),
+        seconds: 0,
+        emptyHours: showEmptyBar ? REGULATORY_DAILY_HOURS : 0,
+        regularHours: 0,
+        extraHours: 0,
+        isNonWorking,
+        isEmpty: showEmptyBar,
+        timeOffLabel,
+      }
+    }
 
     if (isNonWorking) {
       return {
         key: d.date,
         label: dayLabel(d.date),
         seconds: d.seconds,
+        emptyHours: 0,
         regularHours: 0,
         extraHours: hours,
         isNonWorking: true,
+        isEmpty: false,
+        timeOffLabel,
       }
     }
 
@@ -51,15 +73,18 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
       key: d.date,
       label: dayLabel(d.date),
       seconds: d.seconds,
+      emptyHours: 0,
       regularHours: Math.min(hours, REGULATORY_DAILY_HOURS),
       extraHours: Math.max(0, hours - REGULATORY_DAILY_HOURS),
       isNonWorking: false,
+      isEmpty: false,
+      timeOffLabel,
     }
   })
 
   const maxHours = Math.max(
     REGULATORY_DAILY_HOURS,
-    ...chartData.map((d) => d.regularHours + d.extraHours),
+    ...chartData.map((d) => d.emptyHours + d.regularHours + d.extraHours),
     1,
   )
 
@@ -68,8 +93,8 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
       <CardHeader>
         <CardTitle>Últimos 7 días</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Blanco: hasta {REGULATORY_DAILY_HOURS}h reglamentarias. Rojo: exceso,
-          feriado o fin de semana.
+          Gris: sin registro o día libre. Blanco: hasta {REGULATORY_DAILY_HOURS}h
+          reglamentarias. Rojo: exceso, feriado o fin de semana.
         </p>
       </CardHeader>
       <CardContent>
@@ -77,7 +102,7 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={chartData}
-              margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
+              margin={{ top: 8, right: 8, left: 4, bottom: 4 }}
               barCategoryGap="25%"
             >
               <XAxis
@@ -90,7 +115,7 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
                 domain={[0, Math.ceil(maxHours)]}
                 tickLine={false}
                 axisLine={false}
-                width={40}
+                width={48}
                 tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
                 tickFormatter={(v) => `${v}h`}
               />
@@ -100,8 +125,16 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
                   if (!active || !payload?.length) return null
                   const d = payload[0].payload as ChartDatum
                   let breakdown: string
-                  if (d.seconds <= 0) {
-                    breakdown = "Sin registro"
+                  if (!d.isEmpty && d.seconds <= 0 && d.isNonWorking) {
+                    breakdown = "No laborable"
+                  } else if (d.isEmpty) {
+                    if (d.timeOffLabel) {
+                      breakdown = d.timeOffLabel
+                    } else {
+                      breakdown = d.isNonWorking
+                        ? "Sin registro · no laborable"
+                        : "Sin registro"
+                    }
                   } else if (d.isNonWorking) {
                     breakdown = `${formatDuration(d.seconds)} · no laborable`
                   } else if (d.extraHours > 0) {
@@ -114,15 +147,28 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
                       <p className="font-medium">
                         {d.label} {formatDateDisplay(d.key)}
                       </p>
-                      {d.seconds > 0 ? (
+                      {d.isEmpty && d.timeOffLabel ? (
+                        <p className="text-foreground">{d.timeOffLabel}</p>
+                      ) : d.seconds > 0 ? (
                         <p className="text-muted-foreground">
                           {formatDuration(d.seconds)}
                         </p>
                       ) : null}
-                      <p className="text-xs text-muted-foreground">{breakdown}</p>
+                      {!(d.isEmpty && d.timeOffLabel) ? (
+                        <p className="text-xs text-muted-foreground">
+                          {breakdown}
+                        </p>
+                      ) : null}
                     </div>
                   )
                 }}
+              />
+              <Bar
+                dataKey="emptyHours"
+                stackId="day"
+                fill="#a3a3a3"
+                maxBarSize={48}
+                radius={[0, 0, 0, 0]}
               />
               <Bar
                 dataKey="regularHours"

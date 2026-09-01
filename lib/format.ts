@@ -222,3 +222,16 @@ export function countWorkingDaysInRange(
 export function endOfWeekKey(key: string): string {
   return addDaysToKey(startOfWeekKey(key), 6)
 }
+
+/** Días calendario inclusive entre dos fechas YYYY-MM-DD. */
+export function countCalendarDaysInRange(
+  startKey: string,
+  endKey: string,
+): number {
+  if (endKey < startKey) return 0
+  let count = 0
+  for (let key = startKey; key <= endKey; key = addDaysToKey(key, 1)) {
+    count++
+  }
+  return count
+}

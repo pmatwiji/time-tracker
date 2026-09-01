@@ -1,4 +1,4 @@
-import type { AppConfig, WorkSession } from "@/lib/types"
+import type { AppConfig, VacationUsage, WorkSession } from "@/lib/types"
 import {
   addDaysToKey,
   countWeekdaysInMonth,
@@ -18,6 +18,8 @@ export type DayTotal = {
   seconds: number
   isWeekend: boolean
   isHoliday: boolean
+  /** Descripción si el día está cargado como día libre (día hábil). */
+  timeOffLabel?: string | null
 }
 
 export type Stats = {
@@ -50,7 +52,11 @@ export type Stats = {
   expectedSecondsSinceStart: number
   /** Horas extra: exceso en días hábiles + todo lo de finde/feriado. */
   excessSeconds: number
-  /** Excedente pasado a días según el objetivo diario. */
+  /** Horas de vacaciones/días libres consumidos del banco. */
+  vacationUsedSeconds: number
+  /** Excedente neto después de descontar vacaciones usadas. */
+  netExcessSeconds: number
+  /** Excedente pasado a días según el objetivo diario (bruto, sin descontar uso). */
   vacationDays: number
   last7Days: DayTotal[]
   last30Days: DayTotal[]
@@ -77,10 +83,28 @@ function isNonWorkingDay(key: string, holidays: Set<string>): boolean {
   return isWeekendKey(key) || holidays.has(key)
 }
 
+function buildTimeOffByDate(
+  vacationUsages: VacationUsage[],
+  holidays: Set<string>,
+): Map<string, string> {
+  const byDate = new Map<string, string>()
+  for (const usage of vacationUsages) {
+    const start = toDateKey(usage.start_date)
+    const end = toDateKey(usage.end_date)
+    const label = usage.description?.trim() || "Día libre"
+    for (let key = start; key <= end; key = addDaysToKey(key, 1)) {
+      if (isNonWorkingDay(key, holidays)) continue
+      byDate.set(key, label)
+    }
+  }
+  return byDate
+}
+
 export function computeStats(
   sessions: WorkSession[],
   config: AppConfig,
   apiHolidays?: Set<string>,
+  vacationUsages: VacationUsage[] = [],
 ): Stats {
   const today = todayKey()
   const { year: currentYear, month: currentMonth } = parseDateParts(today)
@@ -91,6 +115,7 @@ export function computeStats(
     apiHolidays,
   )
   const dailyGoalSeconds = Number(config.daily_hours_goal) * 3600
+  const timeOffByDate = buildTimeOffByDate(vacationUsages, holidays)
 
   const byDay = new Map<string, number>()
   let totalSeconds = 0
@@ -178,6 +203,7 @@ export function computeStats(
       seconds: byDay.get(key) ?? 0,
       isWeekend: isWeekendKey(key),
       isHoliday: holidays.has(key),
+      timeOffLabel: timeOffByDate.get(key) ?? null,
     })
   }
 
@@ -189,6 +215,7 @@ export function computeStats(
       seconds: byDay.get(key) ?? 0,
       isWeekend: isWeekendKey(key),
       isHoliday: holidays.has(key),
+      timeOffLabel: timeOffByDate.get(key) ?? null,
     })
   }
 
@@ -218,6 +245,17 @@ export function computeStats(
     workedBusinessDaysSinceStart * dailyGoalSeconds
   const vacationDays =
     dailyGoalSeconds > 0 ? excessSeconds / dailyGoalSeconds : 0
+
+  let vacationUsedSeconds = 0
+  for (const usage of vacationUsages) {
+    const days = countWorkingDaysInRange(
+      toDateKey(usage.start_date),
+      toDateKey(usage.end_date),
+      holidays,
+    )
+    vacationUsedSeconds += days * dailyGoalSeconds
+  }
+  const netExcessSeconds = excessSeconds - vacationUsedSeconds
 
   return {
     totalSeconds,
@@ -251,6 +289,8 @@ export function computeStats(
     expectedDaysSinceStart,
     expectedSecondsSinceStart,
     excessSeconds,
+    vacationUsedSeconds,
+    netExcessSeconds,
     vacationDays,
     last7Days,
     last30Days,

@@ -3,14 +3,14 @@
 import useSWR from "swr"
 import { useMemo } from "react"
 import {
+  Briefcase,
   CalendarDays,
   Clock3,
   Hourglass,
-  Palmtree,
   TrendingUp,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
-import type { AppConfig, WorkSession } from "@/lib/types"
+import type { AppConfig, VacationUsage, WorkSession } from "@/lib/types"
 import { computeStats } from "@/lib/stats"
 import {
   addDaysToKey,
@@ -33,29 +33,38 @@ import { TimerDialog } from "@/components/timer-dialog"
 import { ManualEntryDialog } from "@/components/manual-entry-dialog"
 import { ConfigDialog } from "@/components/config-dialog"
 import { HolidaysCalendarDialog } from "@/components/holidays-calendar-dialog"
+import { TimeOffDialog } from "@/components/time-off-dialog"
+import { TimeOffList } from "@/components/time-off-list"
 
 type DashboardData = {
   config: AppConfig
   sessions: WorkSession[]
+  vacationUsages: VacationUsage[]
 }
 
 async function fetchData(): Promise<DashboardData> {
   const supabase = createClient()
 
-  const [configRes, sessionsRes] = await Promise.all([
+  const [configRes, sessionsRes, vacationRes] = await Promise.all([
     supabase.from("app_config").select("*").eq("id", 1).single(),
     supabase
       .from("work_sessions")
       .select("*")
       .order("created_at", { ascending: false }),
+    supabase
+      .from("vacation_usage")
+      .select("*")
+      .order("start_date", { ascending: false }),
   ])
 
   if (configRes.error) throw configRes.error
   if (sessionsRes.error) throw sessionsRes.error
+  if (vacationRes.error) throw vacationRes.error
 
   return {
     config: configRes.data as AppConfig,
     sessions: (sessionsRes.data ?? []) as WorkSession[],
+    vacationUsages: (vacationRes.data ?? []) as VacationUsage[],
   }
 }
 
@@ -72,8 +81,12 @@ export function Dashboard() {
     for (const s of data?.sessions ?? []) {
       years.add(parseDateParts(toDateKey(s.worked_on)).year)
     }
+    for (const v of data?.vacationUsages ?? []) {
+      years.add(parseDateParts(toDateKey(v.start_date)).year)
+      years.add(parseDateParts(toDateKey(v.end_date)).year)
+    }
     return [...years]
-  }, [data?.sessions])
+  }, [data?.sessions, data?.vacationUsages])
 
   const { data: apiHolidays = [] } = useSWR(
     holidayYears.length ? ["feriados", ...holidayYears] : null,
@@ -86,10 +99,27 @@ export function Dashboard() {
     [apiHolidays],
   )
 
+  const mergedHolidayDates = useMemo(() => {
+    const merged = new Set(apiHolidayDates)
+    for (const s of data?.sessions ?? []) {
+      if (s.is_holiday) merged.add(toDateKey(s.worked_on))
+    }
+    return merged
+  }, [apiHolidayDates, data?.sessions])
+
   const stats = useMemo(() => {
     if (!data) return null
-    return computeStats(data.sessions, data.config, apiHolidayDates)
+    return computeStats(
+      data.sessions,
+      data.config,
+      apiHolidayDates,
+      data.vacationUsages,
+    )
   }, [data, apiHolidayDates])
+
+  const dailyGoalSeconds = data
+    ? Number(data.config.daily_hours_goal) * 3600
+    : 0
 
   const refresh = () => mutate()
 
@@ -113,6 +143,12 @@ export function Dashboard() {
           <ManualEntryDialog
             onSaved={refresh}
             holidayDates={apiHolidayDates}
+          />
+          <TimeOffDialog
+            onSaved={refresh}
+            availableSeconds={stats?.netExcessSeconds ?? 0}
+            dailyHoursGoal={data?.config.daily_hours_goal ?? 4}
+            holidayDates={mergedHolidayDates}
           />
           <TimerDialog onSaved={refresh} holidayDates={apiHolidayDates} />
         </div>
@@ -158,18 +194,21 @@ export function Dashboard() {
             <StatCard
               label="Horas trabajadas"
               value={formatDuration(stats.totalSeconds)}
+              sublabelSingleLine
               sublabel={
                 stats.firstWorkedOn ? (
                   <div className="space-y-0.5">
-                    <p>
-                      Debía: {formatDuration(stats.expectedSecondsSinceStart)} (
-                      {stats.expectedDaysSinceStart} días hábiles)
+                    <p title={`Debía: ${formatDuration(stats.expectedSecondsSinceStart)} (${stats.expectedDaysSinceStart} días hábiles)`}>
+                      Debía: {formatDuration(stats.expectedSecondsSinceStart)}{" "}
+                      ({stats.expectedDaysSinceStart} días hábiles)
                     </p>
-                    <p>
-                      Vacaciones:{" "}
+                    <p
+                      title={`Días libres: ${formatVacationBalance(stats.netExcessSeconds, dailyGoalSeconds)}`}
+                    >
+                      Días libres:{" "}
                       {formatVacationBalance(
-                        stats.excessSeconds,
-                        Number(data.config.daily_hours_goal) * 3600,
+                        stats.netExcessSeconds,
+                        dailyGoalSeconds,
                       )}
                     </p>
                   </div>
@@ -177,7 +216,7 @@ export function Dashboard() {
                   "Sin registros aún"
                 )
               }
-              icon={Palmtree}
+              icon={Briefcase}
             />
           </section>
 
@@ -205,15 +244,16 @@ export function Dashboard() {
                   progress: stats.monthHoursProgress,
                 },
                 {
-                  label: "Días de vacaciones",
+                  label: "Días libres",
                   detail: formatVacationBalance(
-                    stats.excessSeconds,
-                    Number(data.config.daily_hours_goal) * 3600,
+                    stats.netExcessSeconds,
+                    dailyGoalSeconds,
                   ),
                   progress:
-                    stats.expectedSecondsSinceStart > 0
+                    stats.excessSeconds > 0
                       ? Math.min(
-                          stats.excessSeconds / stats.expectedSecondsSinceStart,
+                          Math.max(stats.netExcessSeconds, 0) /
+                            stats.excessSeconds,
                           1,
                         )
                       : 0,
@@ -240,6 +280,15 @@ export function Dashboard() {
             <div className="lg:col-span-2">
               <RecentSessions sessions={data.sessions} onChanged={refresh} />
             </div>
+          </section>
+
+          <section>
+            <TimeOffList
+              usages={data.vacationUsages}
+              holidayDates={mergedHolidayDates}
+              dailyHoursGoal={data.config.daily_hours_goal}
+              onChanged={refresh}
+            />
           </section>
         </div>
       )}
