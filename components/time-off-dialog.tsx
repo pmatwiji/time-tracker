@@ -16,20 +16,25 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import {
+  addDaysToKey,
   countWorkingDaysInRange,
   formatDateDisplay,
   formatDuration,
-  formatVacationBalance,
+  formatVacationDayUnits,
+  isWeekendKey,
   parseDisplayDate,
   todayKey,
 } from "@/lib/format"
+import { goalHoursOnDate, sumGoalSecondsOnWorkingDays } from "@/lib/goals"
+import type { DailyGoalPeriod } from "@/lib/types"
 import { toast } from "sonner"
 
 type TimeOffDialogProps = {
   onSaved: () => void
-  /** Saldo neto disponible en segundos (para aviso). */
-  availableSeconds?: number
-  dailyHoursGoal: number
+  /** Saldo neto en días libres. */
+  availableDayUnits?: number
+  goalPeriods?: DailyGoalPeriod[]
+  fallbackHours?: number
   holidayDates?: Set<string>
 }
 
@@ -101,8 +106,9 @@ function DateField({ id, label, value, onChange }: DateFieldProps) {
 
 export function TimeOffDialog({
   onSaved,
-  availableSeconds = 0,
-  dailyHoursGoal,
+  availableDayUnits = 0,
+  goalPeriods = [],
+  fallbackHours = 4,
   holidayDates,
 }: TimeOffDialogProps) {
   const [open, setOpen] = useState(false)
@@ -111,20 +117,31 @@ export function TimeOffDialog({
   const [description, setDescription] = useState("")
   const [saving, setSaving] = useState(false)
 
-  const dailyGoalSeconds = dailyHoursGoal * 3600
-
   const preview = useMemo(() => {
     const start = parseDisplayDate(startInput)
     const end = parseDisplayDate(endInput)
     if (!start || !end || end < start) return null
     const days = countWorkingDaysInRange(start, end, holidayDates)
+    const seconds = sumGoalSecondsOnWorkingDays(
+      start,
+      end,
+      holidayDates ?? new Set(),
+      goalPeriods,
+      fallbackHours,
+    )
+    const goals = new Set<number>()
+    for (let key = start; key <= end; key = addDaysToKey(key, 1)) {
+      if (isWeekendKey(key) || holidayDates?.has(key)) continue
+      goals.add(goalHoursOnDate(key, goalPeriods, fallbackHours))
+    }
     return {
       start,
       end,
       days,
-      seconds: days * dailyGoalSeconds,
+      seconds,
+      uniformHours: goals.size === 1 ? [...goals][0] : null,
     }
-  }, [startInput, endInput, dailyGoalSeconds, holidayDates])
+  }, [startInput, endInput, holidayDates, goalPeriods, fallbackHours])
 
   const resetForm = () => {
     const display = todayDisplay()
@@ -164,11 +181,17 @@ export function TimeOffDialog({
       return
     }
 
-    const usedSeconds = daysCount * dailyGoalSeconds
+    const usedSeconds = sumGoalSecondsOnWorkingDays(
+      start,
+      end,
+      holidayDates ?? new Set(),
+      goalPeriods,
+      fallbackHours,
+    )
 
-    if (usedSeconds > availableSeconds && availableSeconds > 0) {
+    if (daysCount > availableDayUnits && availableDayUnits > 0) {
       toast.warning("Saldo insuficiente", {
-        description: `Tenés ${formatVacationBalance(availableSeconds, dailyGoalSeconds)} y querés usar ${formatVacationBalance(usedSeconds, dailyGoalSeconds)}.`,
+        description: `Tenés ${formatVacationDayUnits(availableDayUnits, fallbackHours * 3600)} y querés usar ${daysCount} ${daysCount === 1 ? "día" : "días"}.`,
       })
     }
 
@@ -209,7 +232,7 @@ export function TimeOffDialog({
           <DialogTitle>Cargar días libres</DialogTitle>
           <DialogDescription>
             Solo cuentan los días hábiles (lun–vie, sin feriados). Cada uno
-            descuenta {dailyHoursGoal} horas enteras del banco acumulado.
+            descuenta un día entero, con el objetivo vigente en esa fecha.
           </DialogDescription>
         </DialogHeader>
 
@@ -244,8 +267,11 @@ export function TimeOffDialog({
                 <span className="font-medium text-foreground">
                   {preview.days} {preview.days === 1 ? "día hábil" : "días hábiles"}
                 </span>{" "}
-                ({formatDuration(preview.seconds)} = {preview.days} ×{" "}
-                {dailyHoursGoal}h). Fines de semana y feriados no cuentan.
+                ({formatDuration(preview.seconds)}
+                {preview.uniformHours != null
+                  ? ` = ${preview.days} × ${preview.uniformHours}h`
+                  : ""}
+                ). Fines de semana y feriados no cuentan.
               </p>
             ) : (
               <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

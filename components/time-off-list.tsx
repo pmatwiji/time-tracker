@@ -5,7 +5,7 @@ import { CalendarOff, Trash2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { VacationUsage } from "@/lib/types"
+import type { DailyGoalPeriod, VacationUsage } from "@/lib/types"
 import {
   countWorkingDaysInRange,
   formatDateDisplay,
@@ -14,6 +14,7 @@ import {
   parseDisplayDate,
   toDateKey,
 } from "@/lib/format"
+import { sumGoalSecondsOnWorkingDays } from "@/lib/goals"
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -21,7 +22,8 @@ import { toast } from "sonner"
 type TimeOffListProps = {
   usages: VacationUsage[]
   holidayDates?: Set<string>
-  dailyHoursGoal: number
+  goalPeriods?: DailyGoalPeriod[]
+  fallbackHours?: number
   onChanged: () => void
 }
 
@@ -38,16 +40,26 @@ function workingDaysSummary(
   start: string,
   end: string,
   holidayDates: Set<string> | undefined,
-  dailyHoursGoal: number,
-): { days: number; hours: number } {
-  const days = countWorkingDaysInRange(start, end, holidayDates)
-  return { days, hours: days * dailyHoursGoal }
+  goalPeriods: DailyGoalPeriod[],
+  fallbackHours: number,
+): { days: number; seconds: number } {
+  const holidays = holidayDates ?? new Set<string>()
+  const days = countWorkingDaysInRange(start, end, holidays)
+  const seconds = sumGoalSecondsOnWorkingDays(
+    start,
+    end,
+    holidays,
+    goalPeriods,
+    fallbackHours,
+  )
+  return { days, seconds }
 }
 
 export function TimeOffList({
   usages,
   holidayDates,
-  dailyHoursGoal,
+  goalPeriods = [],
+  fallbackHours = 4,
   onChanged,
 }: TimeOffListProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -203,11 +215,12 @@ export function TimeOffList({
             {usages.map((usage) => {
               const startKey = toDateKey(usage.start_date)
               const endKey = toDateKey(usage.end_date)
-              const { days } = workingDaysSummary(
+              const { days, seconds } = workingDaysSummary(
                 startKey,
                 endKey,
                 holidayDates,
-                dailyHoursGoal,
+                goalPeriods,
+                fallbackHours,
               )
               const descriptionLabel =
                 usage.description?.trim() || "Sin descripción"
@@ -217,17 +230,20 @@ export function TimeOffList({
                 editingId === usage.id && editingField === "dates"
               const busy = savingId === usage.id || deletingId === usage.id
 
-              const draftDays =
-                isEditingDates &&
-                parseDisplayDate(startDraft) &&
-                parseDisplayDate(endDraft) &&
-                parseDisplayDate(endDraft)! >= parseDisplayDate(startDraft)!
-                  ? countWorkingDaysInRange(
-                      parseDisplayDate(startDraft)!,
-                      parseDisplayDate(endDraft)!,
+              const draftStart = parseDisplayDate(startDraft)
+              const draftEnd = parseDisplayDate(endDraft)
+              const draftSummary =
+                isEditingDates && draftStart && draftEnd && draftEnd >= draftStart
+                  ? workingDaysSummary(
+                      draftStart,
+                      draftEnd,
                       holidayDates,
+                      goalPeriods,
+                      fallbackHours,
                     )
-                  : days
+                  : null
+              const shownDays = draftSummary?.days ?? days
+              const shownSeconds = draftSummary?.seconds ?? seconds
 
               return (
                 <li
@@ -343,10 +359,8 @@ export function TimeOffList({
                   </div>
 
                   <span className="whitespace-nowrap text-right text-sm tabular-nums text-muted-foreground">
-                    {draftDays} {draftDays === 1 ? "día" : "días"} ·{" "}
-                    {formatDuration(
-                      (isEditingDates ? draftDays : days) * dailyHoursGoal * 3600,
-                    )}
+                    {shownDays} {shownDays === 1 ? "día" : "días"} ·{" "}
+                    {formatDuration(shownSeconds)}
                   </span>
 
                   <Button

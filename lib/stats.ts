@@ -1,4 +1,9 @@
-import type { AppConfig, VacationUsage, WorkSession } from "@/lib/types"
+import type { AppConfig, DailyGoalPeriod, VacationUsage, WorkSession } from "@/lib/types"
+import {
+  goalHoursOnDate,
+  monthRangeKeys,
+  sumGoalSecondsOnWorkingDays,
+} from "@/lib/goals"
 import {
   addDaysToKey,
   countWeekdaysInMonth,
@@ -20,6 +25,8 @@ export type DayTotal = {
   isHoliday: boolean
   /** Descripción si el día está cargado como día libre (día hábil). */
   timeOffLabel?: string | null
+  /** Objetivo diario vigente en esa fecha. */
+  goalHours: number
 }
 
 export type Stats = {
@@ -40,6 +47,8 @@ export type Stats = {
   avgPerWorkedDay: number
   bestDay: DayTotal | null
   todayIsWorkingDay: boolean
+  /** Objetivo de hoy, también en días no laborables. */
+  todayGoalHours: number
   todayGoalSeconds: number
   todayProgress: number // 0..1
   monthDaysGoalProgress: number // 0..1
@@ -54,9 +63,13 @@ export type Stats = {
   excessSeconds: number
   /** Horas de vacaciones/días libres consumidos del banco. */
   vacationUsedSeconds: number
-  /** Excedente neto después de descontar vacaciones usadas. */
+  /** Excedente neto después de descontar días libres usados. */
   netExcessSeconds: number
-  /** Excedente pasado a días según el objetivo diario (bruto, sin descontar uso). */
+  /** Días libres ganados (exceso / objetivo de cada día). */
+  vacationDayUnits: number
+  /** Días libres netos después de descontar los usados. */
+  netVacationDayUnits: number
+  /** Excedente pasado a días según el objetivo de cada fecha. */
   vacationDays: number
   last7Days: DayTotal[]
   last30Days: DayTotal[]
@@ -105,6 +118,7 @@ export function computeStats(
   config: AppConfig,
   apiHolidays?: Set<string>,
   vacationUsages: VacationUsage[] = [],
+  goalPeriods: DailyGoalPeriod[] = [],
 ): Stats {
   const today = todayKey()
   const { year: currentYear, month: currentMonth } = parseDateParts(today)
@@ -114,7 +128,10 @@ export function computeStats(
     holidayDatesFromSessions(sessions),
     apiHolidays,
   )
-  const dailyGoalSeconds = Number(config.daily_hours_goal) * 3600
+  const fallbackHours = Number(config.daily_hours_goal)
+  const goalHours = (key: string) =>
+    goalHoursOnDate(key, goalPeriods, fallbackHours)
+  const goalSeconds = (key: string) => goalHours(key) * 3600
   const timeOffByDate = buildTimeOffByDate(vacationUsages, holidays)
 
   const byDay = new Map<string, number>()
@@ -191,6 +208,7 @@ export function computeStats(
         seconds,
         isWeekend: isWeekendKey(date),
         isHoliday: holidays.has(date),
+        goalHours: goalHours(date),
       }
     }
   }
@@ -204,6 +222,7 @@ export function computeStats(
       isWeekend: isWeekendKey(key),
       isHoliday: holidays.has(key),
       timeOffLabel: timeOffByDate.get(key) ?? null,
+      goalHours: goalHours(key),
     })
   }
 
@@ -216,46 +235,69 @@ export function computeStats(
       isWeekend: isWeekendKey(key),
       isHoliday: holidays.has(key),
       timeOffLabel: timeOffByDate.get(key) ?? null,
+      goalHours: goalHours(key),
     })
   }
 
+  const todayGoalHours = goalHours(today)
   const todayIsWorkingDay = !isNonWorkingDay(today, holidays)
-  const todayGoalSeconds = todayIsWorkingDay ? dailyGoalSeconds : 0
-  const weekHoursGoalSeconds =
-    Number(config.daily_hours_goal) * expectedWorkingDaysThisWeek * 3600
-  const monthHoursGoalSeconds =
-    Number(config.daily_hours_goal) * expectedWorkingDays * 3600
+  const todayGoalSeconds = todayIsWorkingDay ? todayGoalHours * 3600 : 0
+  const weekHoursGoalSeconds = sumGoalSecondsOnWorkingDays(
+    weekStart,
+    weekEnd,
+    holidays,
+    goalPeriods,
+    fallbackHours,
+  )
+  const monthRange = monthRangeKeys(currentYear, currentMonth)
+  const monthHoursGoalSeconds = sumGoalSecondsOnWorkingDays(
+    monthRange.start,
+    monthRange.end,
+    holidays,
+    goalPeriods,
+    fallbackHours,
+  )
 
-  // Banco de vacaciones: solo horas por encima del objetivo diario.
+  // Banco de días libres: el exceso se mide contra el objetivo de cada fecha.
   // Finde/feriado cuenta entero. Los días por debajo del objetivo NO restan.
   let excessSeconds = 0
+  let vacationDayUnits = 0
   let workedBusinessDaysSinceStart = 0
+  let expectedSecondsSinceStart = 0
   for (const [date, seconds] of byDay.entries()) {
     if (seconds <= 0) continue
+    const dayGoalSeconds = goalSeconds(date)
     if (isNonWorkingDay(date, holidays)) {
       excessSeconds += seconds
+      if (dayGoalSeconds > 0) vacationDayUnits += seconds / dayGoalSeconds
       continue
     }
     workedBusinessDaysSinceStart++
-    excessSeconds += Math.max(0, seconds - dailyGoalSeconds)
+    expectedSecondsSinceStart += dayGoalSeconds
+    const extra = Math.max(0, seconds - dayGoalSeconds)
+    excessSeconds += extra
+    if (dayGoalSeconds > 0) vacationDayUnits += extra / dayGoalSeconds
   }
 
   const expectedDaysSinceStart = workedBusinessDaysSinceStart
-  const expectedSecondsSinceStart =
-    workedBusinessDaysSinceStart * dailyGoalSeconds
-  const vacationDays =
-    dailyGoalSeconds > 0 ? excessSeconds / dailyGoalSeconds : 0
+  const vacationDays = vacationDayUnits
 
   let vacationUsedSeconds = 0
+  let vacationUsedDayUnits = 0
   for (const usage of vacationUsages) {
-    const days = countWorkingDaysInRange(
-      toDateKey(usage.start_date),
-      toDateKey(usage.end_date),
+    const start = toDateKey(usage.start_date)
+    const end = toDateKey(usage.end_date)
+    vacationUsedSeconds += sumGoalSecondsOnWorkingDays(
+      start,
+      end,
       holidays,
+      goalPeriods,
+      fallbackHours,
     )
-    vacationUsedSeconds += days * dailyGoalSeconds
+    vacationUsedDayUnits += countWorkingDaysInRange(start, end, holidays)
   }
   const netExcessSeconds = excessSeconds - vacationUsedSeconds
+  const netVacationDayUnits = vacationDayUnits - vacationUsedDayUnits
 
   return {
     totalSeconds,
@@ -271,6 +313,7 @@ export function computeStats(
     avgPerWorkedDay,
     bestDay,
     todayIsWorkingDay,
+    todayGoalHours,
     todayGoalSeconds,
     todayProgress: todayIsWorkingDay
       ? todayGoalSeconds > 0
@@ -291,6 +334,8 @@ export function computeStats(
     excessSeconds,
     vacationUsedSeconds,
     netExcessSeconds,
+    vacationDayUnits,
+    netVacationDayUnits,
     vacationDays,
     last7Days,
     last30Days,

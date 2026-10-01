@@ -27,6 +27,7 @@ import { toast } from "sonner"
 type ManualEntryDialogProps = {
   onSaved: () => void
   holidayDates?: Set<string>
+  goalHoursForDate?: (dateKey: string) => number
 }
 
 function todayDisplay(): string {
@@ -36,6 +37,7 @@ function todayDisplay(): string {
 export function ManualEntryDialog({
   onSaved,
   holidayDates,
+  goalHoursForDate,
 }: ManualEntryDialogProps) {
   const [open, setOpen] = useState(false)
   const [dateInput, setDateInput] = useState(todayDisplay)
@@ -52,21 +54,31 @@ export function ManualEntryDialog({
   const holidayForDate = (key: string | null) =>
     Boolean(key && holidayDates?.has(key))
 
+  const hoursForDate = (key: string) =>
+    goalHoursForDate?.(key) ?? REGULATORY_DAILY_HOURS
+
   const resetForm = () => {
     const display = todayDisplay()
     setDateInput(display)
-    setHours(String(REGULATORY_DAILY_HOURS))
+    setHours(String(hoursForDate(today)))
     setMinutes("0")
     setNote("")
     setIsHoliday(holidayForDate(today))
   }
 
+  const parsedDate = parseDisplayDate(dateInput)
+
   useEffect(() => {
     if (!open) return
-    const key = parseDisplayDate(dateInput)
-    setIsHoliday(holidayForDate(key))
+    setIsHoliday(holidayForDate(parsedDate))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateInput, holidayDates, open])
+  }, [parsedDate, holidayDates, open])
+
+  useEffect(() => {
+    if (!open || !parsedDate) return
+    setHours(String(hoursForDate(parsedDate)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, parsedDate])
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next)

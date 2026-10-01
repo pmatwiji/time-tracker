@@ -44,6 +44,26 @@ create table if not exists public.vacation_usage (
 create index if not exists vacation_usage_start_date_idx
   on public.vacation_usage (start_date desc);
 
+-- Objetivo diario por fecha. Cada fila rige desde effective_from
+-- hasta el día anterior al siguiente período.
+create table if not exists public.daily_goal_periods (
+  id uuid primary key default gen_random_uuid(),
+  effective_from date not null unique,
+  daily_hours numeric not null check (daily_hours > 0 and daily_hours <= 24),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists daily_goal_periods_effective_from_idx
+  on public.daily_goal_periods (effective_from);
+
+-- Conserva el objetivo actual para todo el historial. Un período nuevo
+-- (por ejemplo 6h desde hoy) no reescribe los días anteriores.
+insert into public.daily_goal_periods (effective_from, daily_hours)
+select date '2000-01-01', daily_hours_goal
+from public.app_config
+where id = 1
+on conflict (effective_from) do nothing;
+
 -- Fila inicial de config (la app la lee con .eq("id", 1).single())
 insert into public.app_config (id, daily_hours_goal, monthly_days_goal)
 values (1, 8, 20)
@@ -53,6 +73,7 @@ on conflict (id) do nothing;
 alter table public.app_config enable row level security;
 alter table public.work_sessions enable row level security;
 alter table public.vacation_usage enable row level security;
+alter table public.daily_goal_periods enable row level security;
 
 drop policy if exists "Allow all on app_config" on public.app_config;
 create policy "Allow all on app_config"
@@ -71,6 +92,13 @@ create policy "Allow all on work_sessions"
 drop policy if exists "Allow all on vacation_usage" on public.vacation_usage;
 create policy "Allow all on vacation_usage"
   on public.vacation_usage
+  for all
+  using (true)
+  with check (true);
+
+drop policy if exists "Allow all on daily_goal_periods" on public.daily_goal_periods;
+create policy "Allow all on daily_goal_periods"
+  on public.daily_goal_periods
   for all
   using (true)
   with check (true);

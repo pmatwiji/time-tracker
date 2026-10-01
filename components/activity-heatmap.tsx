@@ -33,6 +33,7 @@ function cellClass(day: DayTotal | null): string {
 
   const hours = toHours(day.seconds)
   const nonWorking = day.isWeekend || day.isHoliday
+  const goal = day.goalHours || REGULATORY_DAILY_HOURS
 
   if (nonWorking) {
     if (hours < 2) return "bg-destructive/40"
@@ -42,8 +43,8 @@ function cellClass(day: DayTotal | null): string {
 
   if (hours < 1) return "bg-neutral-600"
   if (hours < 2) return "bg-neutral-400"
-  if (hours < REGULATORY_DAILY_HOURS) return "bg-neutral-200"
-  if (hours > REGULATORY_DAILY_HOURS) return "bg-destructive"
+  if (hours + 0.05 < goal) return "bg-neutral-200"
+  if (hours > goal) return "bg-destructive"
   return "bg-white"
 }
 
@@ -58,9 +59,10 @@ function tooltipText(day: DayTotal): string {
     return `${formatDuration(day.seconds)} · no laborable`
   }
   const hours = toHours(day.seconds)
-  if (hours > REGULATORY_DAILY_HOURS) {
-    const extra = Math.round((hours - REGULATORY_DAILY_HOURS) * 3600)
-    return `${REGULATORY_DAILY_HOURS}h regulares + ${formatDuration(extra)} extra`
+  const goal = day.goalHours || REGULATORY_DAILY_HOURS
+  if (hours > goal) {
+    const extra = Math.round((hours - goal) * 3600)
+    return `${goal}h regulares + ${formatDuration(extra)} extra`
   }
   return `${formatDuration(day.seconds)} reglamentarias`
 }
@@ -97,6 +99,7 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
               isWeekend: isWeekendKey(key),
               isHoliday: false,
               timeOffLabel: null,
+              goalHours: REGULATORY_DAILY_HOURS,
             },
           )
         }

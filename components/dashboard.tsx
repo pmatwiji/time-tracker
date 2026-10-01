@@ -10,12 +10,12 @@ import {
   TrendingUp,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
-import type { AppConfig, VacationUsage, WorkSession } from "@/lib/types"
+import type { AppConfig, DailyGoalPeriod, VacationUsage, WorkSession } from "@/lib/types"
 import { computeStats } from "@/lib/stats"
 import {
   addDaysToKey,
   formatDuration,
-  formatVacationBalance,
+  formatVacationDayUnits,
   parseDateParts,
   toDateKey,
   todayKey,
@@ -35,17 +35,29 @@ import { ConfigDialog } from "@/components/config-dialog"
 import { HolidaysCalendarDialog } from "@/components/holidays-calendar-dialog"
 import { TimeOffDialog } from "@/components/time-off-dialog"
 import { TimeOffList } from "@/components/time-off-list"
+import { goalHoursOnDate } from "@/lib/goals"
 
 type DashboardData = {
   config: AppConfig
   sessions: WorkSession[]
   vacationUsages: VacationUsage[]
+  goalPeriods: DailyGoalPeriod[]
+}
+
+function isMissingGoalTable(error: { code?: string; message?: string }) {
+  const code = error.code ?? ""
+  const message = error.message ?? ""
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    message.includes("daily_goal_periods")
+  )
 }
 
 async function fetchData(): Promise<DashboardData> {
   const supabase = createClient()
 
-  const [configRes, sessionsRes, vacationRes] = await Promise.all([
+  const [configRes, sessionsRes, vacationRes, goalsRes] = await Promise.all([
     supabase.from("app_config").select("*").eq("id", 1).single(),
     supabase
       .from("work_sessions")
@@ -55,16 +67,22 @@ async function fetchData(): Promise<DashboardData> {
       .from("vacation_usage")
       .select("*")
       .order("start_date", { ascending: false }),
+    supabase
+      .from("daily_goal_periods")
+      .select("*")
+      .order("effective_from", { ascending: true }),
   ])
 
   if (configRes.error) throw configRes.error
   if (sessionsRes.error) throw sessionsRes.error
   if (vacationRes.error) throw vacationRes.error
+  if (goalsRes.error && !isMissingGoalTable(goalsRes.error)) throw goalsRes.error
 
   return {
     config: configRes.data as AppConfig,
     sessions: (sessionsRes.data ?? []) as WorkSession[],
     vacationUsages: (vacationRes.data ?? []) as VacationUsage[],
+    goalPeriods: (goalsRes.error ? [] : (goalsRes.data ?? [])) as DailyGoalPeriod[],
   }
 }
 
@@ -114,12 +132,16 @@ export function Dashboard() {
       data.config,
       apiHolidayDates,
       data.vacationUsages,
+      data.goalPeriods,
     )
   }, [data, apiHolidayDates])
 
-  const dailyGoalSeconds = data
-    ? Number(data.config.daily_hours_goal) * 3600
-    : 0
+  const fallbackHours = Number(data?.config.daily_hours_goal ?? 4)
+  const goalPeriods = data?.goalPeriods ?? []
+  const dailyGoalSeconds = (stats?.todayGoalHours ?? fallbackHours) * 3600
+  const vacationLabel = stats
+    ? formatVacationDayUnits(stats.netVacationDayUnits, dailyGoalSeconds)
+    : "0 Dias"
 
   const refresh = () => mutate()
 
@@ -138,16 +160,26 @@ export function Dashboard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {data ? <ConfigDialog config={data.config} onSaved={refresh} /> : null}
+          {data ? (
+            <ConfigDialog
+              config={data.config}
+              goalPeriods={data.goalPeriods}
+              onSaved={refresh}
+            />
+          ) : null}
           <HolidaysCalendarDialog />
           <ManualEntryDialog
             onSaved={refresh}
             holidayDates={apiHolidayDates}
+            goalHoursForDate={(dateKey) =>
+              goalHoursOnDate(dateKey, goalPeriods, fallbackHours)
+            }
           />
           <TimeOffDialog
             onSaved={refresh}
-            availableSeconds={stats?.netExcessSeconds ?? 0}
-            dailyHoursGoal={data?.config.daily_hours_goal ?? 4}
+            availableDayUnits={stats?.netVacationDayUnits ?? 0}
+            goalPeriods={goalPeriods}
+            fallbackHours={fallbackHours}
             holidayDates={mergedHolidayDates}
           />
           <TimerDialog onSaved={refresh} holidayDates={apiHolidayDates} />
@@ -174,7 +206,7 @@ export function Dashboard() {
               value={formatDuration(stats.todaySeconds)}
               sublabel={
                 stats.todayIsWorkingDay
-                  ? `Objetivo: ${data.config.daily_hours_goal}h`
+                  ? `Objetivo: ${stats.todayGoalHours}h`
                   : "Día no laborable"
               }
               icon={Clock3}
@@ -202,14 +234,8 @@ export function Dashboard() {
                       Debía: {formatDuration(stats.expectedSecondsSinceStart)}{" "}
                       ({stats.expectedDaysSinceStart} días hábiles)
                     </p>
-                    <p
-                      title={`Días libres: ${formatVacationBalance(stats.netExcessSeconds, dailyGoalSeconds)}`}
-                    >
-                      Días libres:{" "}
-                      {formatVacationBalance(
-                        stats.netExcessSeconds,
-                        dailyGoalSeconds,
-                      )}
+                    <p title={`Días libres: ${vacationLabel}`}>
+                      Días libres: {vacationLabel}
                     </p>
                   </div>
                 ) : (
@@ -229,7 +255,7 @@ export function Dashboard() {
                 {
                   label: "Horas de hoy",
                   detail: stats.todayIsWorkingDay
-                    ? `${formatDuration(stats.todaySeconds)} / ${data.config.daily_hours_goal}h`
+                    ? `${formatDuration(stats.todaySeconds)} / ${stats.todayGoalHours}h`
                     : `${formatDuration(stats.todaySeconds)} · no laborable`,
                   progress: stats.todayProgress,
                 },
@@ -245,15 +271,12 @@ export function Dashboard() {
                 },
                 {
                   label: "Días libres",
-                  detail: formatVacationBalance(
-                    stats.netExcessSeconds,
-                    dailyGoalSeconds,
-                  ),
+                  detail: vacationLabel,
                   progress:
-                    stats.excessSeconds > 0
+                    stats.vacationDayUnits > 0
                       ? Math.min(
-                          Math.max(stats.netExcessSeconds, 0) /
-                            stats.excessSeconds,
+                          Math.max(stats.netVacationDayUnits, 0) /
+                            stats.vacationDayUnits,
                           1,
                         )
                       : 0,
@@ -286,7 +309,8 @@ export function Dashboard() {
             <TimeOffList
               usages={data.vacationUsages}
               holidayDates={mergedHolidayDates}
-              dailyHoursGoal={data.config.daily_hours_goal}
+              goalPeriods={data.goalPeriods}
+              fallbackHours={Number(data.config.daily_hours_goal)}
               onChanged={refresh}
             />
           </section>

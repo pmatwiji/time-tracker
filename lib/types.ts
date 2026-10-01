@@ -14,6 +14,14 @@ export type AppConfig = {
   updated_at: string
 }
 
+/** Objetivo diario vigente desde una fecha. Los días anteriores usan el período previo. */
+export type DailyGoalPeriod = {
+  id: string
+  effective_from: string
+  daily_hours: number
+  created_at: string
+}
+
 /** Vacaciones o días libres consumidos del banco (días enteros de 4h). */
 export type VacationUsage = {
   id: string

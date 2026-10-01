@@ -84,6 +84,19 @@ export function formatVacationBalance(
   return parts.length > 0 ? parts.join(" ") : "0 Dias"
 }
 
+/**
+ * Saldo en días (cada día se ganó o gastó contra el objetivo de esa fecha).
+ * El resto de horas se expresa con el objetivo vigente hoy.
+ */
+export function formatVacationDayUnits(
+  dayUnits: number,
+  currentGoalSeconds: number,
+): string {
+  if (!(dayUnits > 0) || !(currentGoalSeconds > 0)) return "0 Dias"
+  const seconds = dayUnits * currentGoalSeconds
+  return formatVacationBalance(seconds, currentGoalSeconds)
+}
+
 /** Decimal hours, rounded to 1 decimal. */
 export function toHours(totalSeconds: number): number {
   return Math.round((totalSeconds / 3600) * 10) / 10

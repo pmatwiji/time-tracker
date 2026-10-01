@@ -14,7 +14,6 @@ import {
   dayLabel,
   formatDateDisplay,
   formatDuration,
-  REGULATORY_DAILY_HOURS,
   toHours,
 } from "@/lib/format"
 
@@ -46,7 +45,7 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
         key: d.date,
         label: dayLabel(d.date),
         seconds: 0,
-        emptyHours: showEmptyBar ? REGULATORY_DAILY_HOURS : 0,
+        emptyHours: showEmptyBar ? d.goalHours : 0,
         regularHours: 0,
         extraHours: 0,
         isNonWorking,
@@ -74,8 +73,8 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
       label: dayLabel(d.date),
       seconds: d.seconds,
       emptyHours: 0,
-      regularHours: Math.min(hours, REGULATORY_DAILY_HOURS),
-      extraHours: Math.max(0, hours - REGULATORY_DAILY_HOURS),
+      regularHours: Math.min(hours, d.goalHours),
+      extraHours: Math.max(0, hours - d.goalHours),
       isNonWorking: false,
       isEmpty: false,
       timeOffLabel,
@@ -83,7 +82,6 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
   })
 
   const maxHours = Math.max(
-    REGULATORY_DAILY_HOURS,
     ...chartData.map((d) => d.emptyHours + d.regularHours + d.extraHours),
     1,
   )
@@ -93,8 +91,8 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
       <CardHeader>
         <CardTitle>Últimos 7 días</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Gris: sin registro o día libre. Blanco: hasta {REGULATORY_DAILY_HOURS}h
-          reglamentarias. Rojo: exceso, feriado o fin de semana.
+          Gris: sin registro o día libre. Blanco: hasta el objetivo de ese día.
+          Rojo: exceso, feriado o fin de semana.
         </p>
       </CardHeader>
       <CardContent>
@@ -138,7 +136,7 @@ export function WeeklyChart({ data }: WeeklyChartProps) {
                   } else if (d.isNonWorking) {
                     breakdown = `${formatDuration(d.seconds)} · no laborable`
                   } else if (d.extraHours > 0) {
-                    breakdown = `${REGULATORY_DAILY_HOURS}h regulares + ${formatDuration(Math.round(d.extraHours * 3600))} extra`
+                    breakdown = `${d.regularHours}h regulares + ${formatDuration(Math.round(d.extraHours * 3600))} extra`
                   } else {
                     breakdown = `${formatDuration(d.seconds)} reglamentarias`
                   }
